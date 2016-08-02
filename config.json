@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "blackList": [],
+  "locations": {
+    "newyork": {
+      "type": "coords",
+      "coords": {
+        "latitude": 40.746377,
+        "longitude": -74.007342,
+        "altitude": 0
+      }
+    }
+  },
+  "user1": {
+    "username": "USERNAME",
+    "password": "PASSWORD",
+    "provider": "ptc"
+  },
+  "moveAround": true,
+  "canUseGreatBalls": true,
+  "removeDupePokemon": false,
+  "dupeLimit": 2
+}

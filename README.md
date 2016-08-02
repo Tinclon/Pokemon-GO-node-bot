@@ -1,0 +1,1 @@
+Original BOT implementation from: https://github.com/Armax/Pokemon-GO-node-api/pull/100

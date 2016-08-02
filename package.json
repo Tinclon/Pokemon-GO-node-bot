@@ -1,0 +1,14 @@
+{
+  "name": "tinclon-pokemon-go-node-bot",
+  "version": "1.0.0",
+  "description": "A minimal Pokemon GO bot",
+  "main": "botTick-main.js",
+  "scripts": {
+    "start": "node botTick-main.js"
+  },
+  "devDependencies": {
+    "pokemon-go-node-api": "1.4.0",
+    "lodash": "^4.13.1",
+    "colors": "1.1.2"
+  }
+}
