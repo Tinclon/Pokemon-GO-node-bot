@@ -2,7 +2,13 @@ var _ = require('lodash');
 var colors = require('colors');
 var configs = require('./config.json');
 
-module.exports = function (pokeio, myLocation) {
+module.exports = function (pokeio, myLocation, reinit) {
+    var errorCount = 0;
+    var originalLocation = JSON.parse(JSON.stringify(myLocation));
+    var latitudeDirection = (Math.random() < 0.5 ? 1 : -1);
+    var longitudeDirection = (Math.random() < 0.5 ? 1 : -1);
+
+
     var logNearbyPokemon = function (nearbyPokemon) {
         var pokemon = pokeio.pokemonlist[parseInt(nearbyPokemon.PokedexNumber) - 1]
     };
@@ -32,7 +38,7 @@ module.exports = function (pokeio, myLocation) {
                                 }
                             } else if (retry < 5) {
                                 retry++;
-                                performCatch(retry+1, pokeBallType - 1);
+                                performCatch(retry+1, pokeBallType > 1 ? pokeBallType - 1 : pokeBallType);
                                 return;
                             } else {
                                 console.log('might have run out of pokeballs: ' + xsuc);
@@ -47,22 +53,36 @@ module.exports = function (pokeio, myLocation) {
             }
 
         }
-        catchInCell(0, 3); //1 = pokeballs, 2 = greatballs, 3 = ultraball
+        catchInCell(0, Math.floor((Math.random() * 3) + 1)); //1 = pokeballs, 2 = greatballs, 3 = ultraball
     };
 
     var moveAround = function (location, next) {
         if (configs.moveAround) {
-            if(location) {// && ((Math.random() * 20) < 3)) {
+            if (myLocation.coords.latitude > originalLocation.coords.latitude + 0.005) {
+                latitudeDirection = -1;
+            }
+            if (myLocation.coords.latitude < originalLocation.coords.latitude - 0.005) {
+                latitudeDirection = 1;
+            }
+            if (myLocation.coords.longitude > originalLocation.coords.longitude + 0.08) {
+                longitudeDirection = -1;
+            }
+            if (myLocation.coords.longitude < originalLocation.coords.longitude - 0.08) {
+                longitudeDirection = 1;
+            }
+            var direction = (((latitudeDirection > 0) ? "N" : "S") + ((longitudeDirection > 0) ? "E" : "W"));
+
+            if(location) {
                 // move to the fort
                 myLocation.coords.latitude = location.latitude;
                 myLocation.coords.longitude = location.longitude;
                 console.log("Moving to out of range fort");
             } else {
-                myLocation.coords.latitude += 0.0001;
-                myLocation.coords.longitude += 0.0001;
+                myLocation.coords.latitude += (latitudeDirection * 0.00005);
+                myLocation.coords.longitude += (longitudeDirection * 0.00005);
             }
             pokeio.SetLocation(myLocation, function () {
-                console.log("I've moved to: loc: " + myLocation.coords.latitude + " " + myLocation.coords.longitude);
+                console.log("I've moved " + direction + " to: loc: " + myLocation.coords.latitude + " " + myLocation.coords.longitude);
                 next();
             });
         }
@@ -74,9 +94,13 @@ module.exports = function (pokeio, myLocation) {
         });
     };
 
-    var releaseDuplicatePokemons = function () {
+    var releaseDuplicatePokemons = function (next) {
         pokeio.GetInventory(function (err, contents) {
-            if (err) throw err;
+            if (err) {
+                console.log('err occurred with getting inventory', err);
+                next();
+                return;
+            }
             var pokemon = _.chain(contents.inventory_delta.inventory_items)
                 .filter(function (i) {
                     if (!i.inventory_item_data.pokemon) return false;
@@ -88,30 +112,48 @@ module.exports = function (pokeio, myLocation) {
                 })
                 .value();
 
-            console.log('got inventory, parsing now', pokemon.length, '# of pokemon');
+            if(pokemon.length <= 0) { next(); }
 
             // last step appends
-            _.each(pokemon, function (pkm) {
+            function releaseAll(allIndex) {
+                if(allIndex >= pokemon.length) { next(); return; }
+                var pkm = pokemon[allIndex];
                 pkm.dupeCount = _.filter(pokemon, {
                     'pokemon_id': pkm.pokemon_id
                 });
                 if (pkm.dupeCount.length > configs.dupeLimit) {
                     pkm.dupeCount = _.sortBy(pkm.dupeCount, 'cp');
-                    _.each(pkm.dupeCount, function (pok, index) {
-                        if (index >= pkm.dupeCount.length - configs.dupeLimit) {
-                            return;
+
+                    function releaseDupe(dupeIndex) {
+                        if (dupeIndex >= pkm.dupeCount.length) { releaseAll(allIndex + 1); return; }
+                        if (dupeIndex >= pkm.dupeCount.length - configs.dupeLimit) {
+                            releaseAll(allIndex + 1);
                         } else {
-                            console.log('releasing pokem0n', pok.pokemon_id, 'with cp ', pok.cp);
+                            var pok = pkm.dupeCount[dupeIndex];
+                            console.log('Got inventory.', pokemon.length, 'pokemon');
+                            console.log('Releasing pokemon', pok.pokemon_id, 'with cp ', pok.cp);
                             pokeio.ReleasePokemon(pok.id, function (err, res) {
                                 if (err) {
-                                    console.log('err occurred with releasing pokemon', err);
+                                    console.log('Error occurred with releasing pokemon:', err);
                                 }
-                                console.log(res);
+                                if (res) {
+                                    console.log("Successfully released pokemon:", res);
+                                    // Since our inventory list of pokemon has now changed, and we don't know where in the
+                                    //  list the change took place, and we're too lazy to write the code to figure it out...
+                                    //  Just move on. We'll release more Pokemon in the next tick anyway.
+                                    next();
+                                    return;
+                                }
+                                releaseDupe(dupeIndex + 1);
                             });
                         }
-                    });
+                    }
+                    releaseDupe(0);
+                } else {
+                    releaseAll(allIndex + 1);
                 }
-            });
+            }
+            releaseAll(0);
 
         });
     };
@@ -138,7 +180,7 @@ module.exports = function (pokeio, myLocation) {
                             spinInCell(cellIndex + 1, nextFort);
                         }
                     });
-                } else if ((Math.random() * 10000) < 6) {
+                } else if ((Math.random() * 10000) < 15) {
                     nextFort = {
                         latitude: fort.Latitude,
                         longitude: fort.Longitude
@@ -159,7 +201,7 @@ module.exports = function (pokeio, myLocation) {
 
         function nextTick() {
             var end = new Date().getTime(),
-                delay = Math.max(7500 - (end-start), 7500);
+                delay = Math.max(5000 - (end-start), 5000);
 
             setTimeout(function () {
                 pokeio.Heartbeat(botTick);
@@ -168,30 +210,43 @@ module.exports = function (pokeio, myLocation) {
 
         if (err) {
             if(err === "No result") {
-                //init();   // TODO: Implement ability to re-login.
+                if(errorCount > 10) {
+                    console.log('Error threshold exceeded. Logging in again');
+                    setTimeout(reinit, 100);
+                    return;
+                }
+                errorCount++;
             }
 
             console.log('Error on botTick: ', err);
             nextTick();
             return;
         }
+        errorCount = 0;
 
-        function deDupe(nextFort) {
+        function deDupe() {
             if (configs.removeDupePokemon) {
-                releaseDuplicatePokemons();
+                releaseDuplicatePokemons(nextTick);
+            } else {
+                nextTick();
             }
-            moveAround(nextFort, nextTick);
         }
 
-        function spinStops(cellIndex, nextFort1) {
-            if(cellIndex >= hb.cells.length) { return; }
-            spinPokestops(hb.cells[cellIndex], function(nextFort2) {catchPokemon(cellIndex+1, nextFort2 || nextFort1); });
+        function move(nextFort) {
+            moveAround(nextFort, deDupe);
         }
 
-        function catchPokemon(cellIndex, nextFort) {
-            if(cellIndex >= hb.cells.length) { deDupe(nextFort); return; }
-            catchWildPokemons(hb.cells[cellIndex], function() { spinStops(cellIndex, nextFort); });
+        function spinStops(cellIndex, nextFort) {
+            if(cellIndex >= hb.cells.length) { move(nextFort); return; }
+            spinPokestops(hb.cells[cellIndex], function(nf) { spinStops(cellIndex+1, nextFort || nf); });
         }
+
+        function catchPokemon(cellIndex) {
+            if(cellIndex >= hb.cells.length) { spinStops(0); return; }
+            catchWildPokemons(hb.cells[cellIndex], function() { catchPokemon(cellIndex+1); });
+        }
+
+        // Pokemon ==> GO
         catchPokemon(0);
 
     };
