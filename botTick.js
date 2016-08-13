@@ -14,6 +14,7 @@ module.exports = function (pokeio, myLocation, reinit) {
     };
 
     var catchWildPokemons = function (cell, next) {
+        const pokeballTypes = ["poke", "great", "ultra"];
         function catchInCell(cellIndex, pokeBallType) {
             if(cellIndex >= cell.WildPokemon.length) { next(); return; }
             var wildPokemon = cell.WildPokemon[cellIndex];
@@ -22,9 +23,9 @@ module.exports = function (pokeio, myLocation, reinit) {
                 console.log('[+] There is a ' + colors.yellow(pokedexInfo.name) + ' near!! I can try to catch it!');
 
                 pokeio.EncounterPokemon(wildPokemon, function (suc, dat) {
-                    console.log('Encountering pokemon ' + colors.yellow(pokedexInfo.name) + '...');
+                    console.log('Encountering pokemon ' + colors.yellow(pokedexInfo.name) + '...' + " trying to catch with " + pokeballTypes[pokeBallType-1] + "ball");
                     function performCatch(retry, pokeBallType) {
-                        pokeio.CatchPokemon(wildPokemon, 1, 1.950, 1, pokeBallType, function (xsuc, xdat) {
+                        pokeio.CatchPokemon(wildPokemon, 1, 1.95, 1, pokeBallType, function (xsuc, xdat) {
                             var status = ['Unexpected error', colors.green('Successful catch'), colors.red('Catch Escape'), colors.red('Catch Flee'), colors.red('Missed Catch')];
                             if (xdat) {
                                 if (xdat.Status === 1) {
@@ -53,7 +54,9 @@ module.exports = function (pokeio, myLocation, reinit) {
             }
 
         }
-        catchInCell(0, Math.floor((Math.random() * 3) + 1)); //1 = pokeballs, 2 = greatballs, 3 = ultraball
+        var ballType = Math.floor((Math.random() * 10) + 1);  //1 = pokeballs, 2 = greatballs, 3 = ultraball
+        if(ballType > 3) { ballType = 1; }  // Prefer pokeballs, as we'll always have more of them around
+        catchInCell(0, ballType);
     };
 
     var moveAround = function (location, next) {
@@ -94,6 +97,59 @@ module.exports = function (pokeio, myLocation, reinit) {
         });
     };
 
+    var dropExtraItems = function (next) {
+        pokeio.GetInventory(function (err, contents) {
+            if (err) {
+                console.log('err occurred with getting inventory', err);
+                next();
+                return;
+            }
+            var item = _.chain(contents.inventory_delta.inventory_items)
+                .filter(function (i) {
+                    if (!i.inventory_item_data.item) return false;
+                    if (!i.inventory_item_data.item.item_id) return false;
+                    return true;
+                })
+                .map(function (i) {
+                    return i.inventory_item_data.item.toRaw();
+                })
+                .value();
+
+            if(item.length <= 0) { next(); }
+
+            function dropAll(allIndex) {
+                if (allIndex >= item.length) { next(); return; }
+                var itm = item[allIndex];
+                var itemDetails = pokeio.itemlist.find(function(element) {
+                    return ("ITEM_"+element.name.toUpperCase()).replace(/ /g,"_").replace(/BALL/g,"_BALL") === itm.item_id;
+                });
+
+                if (itemDetails && itemDetails.id < 10) {
+                    // Just print out how many we have, every now and then
+                    console.log("  [i] Current count of " + itemDetails.name + ": " + (itm.count ? itm.count : "0"));
+                }
+
+                var maxItems = 20;
+
+                if (!itemDetails) { dropAll(allIndex + 1); return; }            // Not sure what this is. Keep it.
+                if (itemDetails.id < 10) { maxItems = 100; }                    // Keep more pokeballs then any other item
+                if (itm.count <= maxItems) { dropAll(allIndex + 1); return; }   // Keep a minimum set of inventory items
+
+                console.log('Dropping item', itm.item_id, 'count', itm.count - maxItems);
+                pokeio.DropItem(itemDetails.id, itm.count - maxItems, function (err, res) {
+                    if (err) {
+                        console.log('Error occurred with dropping items:', err);
+                    }
+                    if (res) {
+                        console.log("Successfully dropped item:", res);
+                    }
+                    dropAll(allIndex + 1);
+                });
+            }
+            dropAll(0);
+        });
+    };
+
     var releaseDuplicatePokemons = function (next) {
         pokeio.GetInventory(function (err, contents) {
             if (err) {
@@ -114,7 +170,6 @@ module.exports = function (pokeio, myLocation, reinit) {
 
             if(pokemon.length <= 0) { next(); }
 
-            // last step appends
             function releaseAll(allIndex) {
                 if(allIndex >= pokemon.length) { next(); return; }
                 var pkm = pokemon[allIndex];
@@ -224,16 +279,27 @@ module.exports = function (pokeio, myLocation, reinit) {
         }
         errorCount = 0;
 
+
         function deDupe() {
-            if (configs.removeDupePokemon) {
+            if (configs.removeDupePokemon && (Math.random() < 0.05)) {
+                // Reading inventory slows us down. Only do it once every now and then.
                 releaseDuplicatePokemons(nextTick);
             } else {
                 nextTick();
             }
         }
 
+        function drop() {
+            if(Math.random() < 0.05) {
+                // Reading inventory slows us down. Only do it once every now and then.
+                dropExtraItems(deDupe);
+            } else {
+                deDupe();
+            }
+        }
+
         function move(nextFort) {
-            moveAround(nextFort, deDupe);
+            moveAround(nextFort, drop);
         }
 
         function spinStops(cellIndex, nextFort) {
